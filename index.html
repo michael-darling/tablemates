@@ -12,6 +12,7 @@ p{margin:0 0 14px;color:var(--text2);font-size:15px}
 .row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:10px;font-size:14px;color:var(--text2)}
 [hidden]{display:none !important}
 button,select{font:inherit;font-size:14px;padding:8px 12px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:8px;cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
 button.seg{flex:1}button[aria-pressed="true"]{border-color:var(--text);font-weight:600}
 label{display:flex;align-items:center;gap:8px}input[type=range]{flex:1;accent-color:var(--accent)}
 #drop{border:1.5px dashed var(--border);border-radius:12px;padding:28px 16px;text-align:center;color:var(--text2);margin-bottom:14px}
@@ -26,7 +27,7 @@ label{display:flex;align-items:center;gap:8px}input[type=range]{flex:1;accent-co
 small{display:block;margin-top:14px;color:var(--text2);font-size:13px}
 </style></head><body><main>
 <h1>tablemates</h1>
-<p>See who plays with whom most often. Pick your BG Stats export file and the graph is built in your browser. Nothing is uploaded anywhere.</p>
+<p>See who plays with whom most often. Pick your BG Stats export file and the graph is built in your browser. The file stays on your device.</p>
 <div id="drop"><p style="margin:0 0 10px">Drop your BGStatsExport.json here, or choose it from your device.</p><button id="pick">Choose file</button><input type="file" id="file" accept=".json,application/json" hidden><div id="err"></div></div>
 <script>if(location.hash.startsWith('#g='))document.getElementById('drop').style.display='none'</script>
 <div id="app">
@@ -34,14 +35,14 @@ small{display:block;margin-top:14px;color:var(--text2);font-size:13px}
 <div class="row"><label>Names <select id="ns"><option value="ini">Initials</option><option value="first">First names</option><option value="full">Full names</option></select></label>
 <label id="inclWrap"><input type="checkbox" id="inclO"><span id="ol">Include owner</span></label></div>
 <div class="row"><label style="flex:1;min-width:200px"><span id="minl">Min shared plays</span><input type="range" id="minw" min="1" max="10" step="1" value="2"><span id="minwv" style="min-width:18px;color:var(--text);font-weight:600">2</span></label></div>
-<div class="row"><button id="share" hidden>Share image</button><button id="dl">Download image</button><button id="cl">Copy link</button></div>
+<div class="row"><button id="share" hidden>Share image</button><button id="dl">Download image</button><button id="cl">Copy link</button><button id="sl">Shorten link</button></div>
 <p id="msg" role="status"></p>
 <input id="linkbox" hidden readonly spellcheck="false" aria-label="Share link">
 <div id="g"></div>
 <div id="out"></div>
 <small id="sum"></small>
 <div class="row" id="ownrow" hidden><button id="own">Use your own file</button></div>
-<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Names start as initials. Download image saves a picture. Copy link builds an address from the names and links on screen. A very large view keeps the strongest links so the address can be sent, and nothing is uploaded.</small>
+<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Names start as initials. Download image saves a picture. Copy link builds an address from the names and links on screen, and that address stays on this device. Shorten link sends that address to is.gd, which stores it and hands back a short link. A very large view keeps the strongest links.</small>
 </div></main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <script>
@@ -409,6 +410,20 @@ function linkMessage(href,style,trimmed){
   return m;
 }
 function markCopied(){$('cl').textContent='Copied';clearTimeout(copiedT);copiedT=setTimeout(()=>$('cl').textContent='Copy link',2000);}
+function shortMessage(style,trimmed){
+  const who=NAME[style]||'names';
+  const what=trimmed?'It uses the '+who+' on screen and the strongest links.':'It includes the '+who+' on screen.';
+  return 'Short link copied. '+what+' The address was sent to is.gd, which stores it.';
+}
+async function shortenHref(href){
+  const res=await fetch('https://is.gd/create.php?format=json&url='+encodeURIComponent(href));
+  if(!res.ok)throw new Error('short');
+  const data=await res.json();
+  if(!data||typeof data.shorturl!=='string'||!/^https:\/\/is\.gd\/[A-Za-z0-9]+$/.test(data.shorturl))throw new Error('short');
+  return data.shorturl;
+}
+let shortT;
+function markShortened(){$('sl').textContent='Shortened';clearTimeout(shortT);shortT=setTimeout(()=>$('sl').textContent='Shorten link',2000);}
 $('cl').onclick=()=>{
   let obj;
   try{obj=sharePayload();}catch(e){note('Lower the minimum until a few people show, then copy a link.');return;}
@@ -417,6 +432,30 @@ $('cl').onclick=()=>{
   const showBox=r=>{const box=$('linkbox');box.hidden=false;box.value=r.href;box.focus();box.select();note(r.trimmed?'The link below is selected. It uses the '+(NAME[obj.s]||'names')+' on screen and the strongest links.':'Select the link below and copy it.');};
   const tooBig='This view has too many players for a link. Download the image to share it.';
   const fail=e=>{if(e&&e.message==='long'){hideLink();note(tooBig);return;}built.then(showBox).catch(err=>note(err&&err.message==='long'?tooBig:'Couldn’t make the link.'));};
+  const writeFallback=r=>copyText(r.href).then(()=>finish(r)).catch(()=>showBox(r));
+  if(navigator.clipboard&&window.ClipboardItem&&window.isSecureContext){
+    try{
+      navigator.clipboard.write([new ClipboardItem({'text/plain':built.then(r=>new Blob([r.href],{type:'text/plain'}))})])
+        .then(()=>built).then(finish).catch(()=>built.then(writeFallback).catch(fail));
+      return;
+    }catch(e){}
+  }
+  built.then(writeFallback).catch(fail);
+};
+$('sl').onclick=()=>{
+  if(location.protocol==='file:'){note('Open the tablemates site to shorten a link. An address from this file only opens on this computer.');return;}
+  let obj;
+  try{obj=sharePayload();}catch(e){note('Lower the minimum until a few people show, then shorten a link.');return;}
+  const btn=$('sl');
+  btn.disabled=true;
+  hideLink();
+  note('Sending the address to is.gd…');
+  const built=packToSend(obj).then(async r=>{if(r.href.length>12000)throw new Error('long');return {href:await shortenHref(r.href),trimmed:r.trimmed};});
+  const release=()=>{btn.disabled=false;};
+  const finish=r=>{hideLink();markShortened();note(shortMessage(obj.s,r.trimmed));release();};
+  const showBox=r=>{const box=$('linkbox');box.hidden=false;box.value=r.href;box.focus();box.select();note('The short link below is selected. The address was sent to is.gd, which stores it.');release();};
+  const tooBig='This view has too many players for a link. Download the image to share it.';
+  const fail=e=>{release();hideLink();note(e&&e.message==='long'?tooBig:'Couldn’t shorten this address. Copy link keeps it on this device.');};
   const writeFallback=r=>copyText(r.href).then(()=>finish(r)).catch(()=>showBox(r));
   if(navigator.clipboard&&window.ClipboardItem&&window.isSecureContext){
     try{

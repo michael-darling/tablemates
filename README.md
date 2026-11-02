@@ -2,7 +2,7 @@
 
 See who plays with whom most often, using your own board game stats.
 
-Pick your BG Stats export file and tablemates draws an interactive network graph in your browser. Nothing is uploaded: the file is read locally and never leaves your device.
+Pick your BG Stats export file and tablemates draws an interactive network graph in your browser. The file is read locally and stays on your device.
 
 ## Use it
 
@@ -18,7 +18,8 @@ Pick your BG Stats export file and tablemates draws an interactive network graph
 - Filter out weak links with the minimum slider.
 - Tap a person to see their top play partners.
 - Share or download the graph as an image.
-- Copy a link that reopens this view. It carries the names on screen and the links you’re looking at, so check the name setting first. A very large view keeps the strongest links so the address stays short enough to send. A picture is the better share when the graph is huge.
+- Copy a link that reopens this view. It carries the names on screen and the links you’re looking at, so check the name setting first. The address stays on your device. A very large view keeps the strongest links so the address stays short enough to send. A picture is the better share when the graph is huge.
+- Shorten that link when you want to text it. Shorten link sends the address to [is.gd](https://is.gd), which stores it and hands back a short link.
 
 ## How hours are estimated
 
@@ -30,7 +31,7 @@ In the repo settings, open Pages, pick the `main` branch and the root folder, an
 
 ## Privacy
 
-Everything runs client-side. A copied link stores the graph in the address itself (the part after `#`), which the browser does not send to the server. Names are initials by default, and the link includes only the names currently shown.
+The graph is built in the browser. The file stays on your device. A copied link stores the graph in the address itself (the part after `#`), which the browser does not send to the server. Shorten link sends that address to is.gd, which stores it. Names are initials by default, and both links include only the names currently shown.
 
 ## Not affiliated
 
