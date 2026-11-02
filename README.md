@@ -17,7 +17,8 @@ Pick your BG Stats export file and tablemates draws an interactive network graph
 - Include or hide the owner, who is in nearly every play and tends to tie the graph into one knot.
 - Filter out weak links with the minimum slider.
 - Tap a person to see their top play partners.
-- Download the graph as an image to share.
+- Share or download the graph as an image.
+- Copy a link that reopens this same view. The link carries only the names on screen and the links you’re looking at, so check the name setting first. Very large graphs should be sent as an image.
 
 ## How hours are estimated
 
@@ -29,7 +30,7 @@ In the repo settings, open Pages, pick the `main` branch and the root folder, an
 
 ## Privacy
 
-Everything runs client-side. Names are anonymized to initials by default; check the setting before you share an image.
+Everything runs client-side. A copied link stores the graph in the address itself (the part after `#`), which the browser does not send to the server. Names are initials by default, and the link includes only the names currently shown.
 
 ## Not affiliated
 

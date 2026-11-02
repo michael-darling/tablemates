@@ -10,6 +10,7 @@ main{max-width:680px;margin:0 auto;padding:20px 16px 32px}
 h1{font-size:26px;font-weight:600;margin:0 0 4px;line-height:1.2}
 p{margin:0 0 14px;color:var(--text2);font-size:15px}
 .row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:10px;font-size:14px;color:var(--text2)}
+[hidden]{display:none !important}
 button,select{font:inherit;font-size:14px;padding:8px 12px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:8px;cursor:pointer}
 button.seg{flex:1}button[aria-pressed="true"]{border-color:var(--text);font-weight:600}
 label{display:flex;align-items:center;gap:8px}input[type=range]{flex:1;accent-color:var(--accent)}
@@ -19,20 +20,28 @@ label{display:flex;align-items:center;gap:8px}input[type=range]{flex:1;accent-co
 #out{min-height:52px;margin-top:10px;padding:10px 12px;background:var(--surface);border-radius:8px;font-size:14px;color:var(--text2)}
 #out b{color:var(--text);font-weight:600}
 #err{color:#d03b3b;font-size:14px;margin-top:8px}
+#msg{margin:0 0 10px;font-size:13px;color:var(--text2)}
+#msg:empty{display:none}
+#linkbox{width:100%;box-sizing:border-box;margin:0 0 10px;padding:8px;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px}
 small{display:block;margin-top:14px;color:var(--text2);font-size:13px}
 </style></head><body><main>
 <h1>tablemates</h1>
 <p>See who plays with whom most often. Pick your BG Stats export file and the graph is built in your browser. Nothing is uploaded anywhere.</p>
 <div id="drop"><p style="margin:0 0 10px">Drop your BGStatsExport.json here, or choose it from your device.</p><button id="pick">Choose file</button><input type="file" id="file" accept=".json,application/json" hidden><div id="err"></div></div>
+<script>if(location.hash.startsWith('#g='))document.getElementById('drop').style.display='none'</script>
 <div id="app">
 <div class="row"><button class="seg" id="bp" aria-pressed="true">Plays</button><button class="seg" id="bh" aria-pressed="false">Est. hours</button></div>
 <div class="row"><label>Names <select id="ns"><option value="ini">Initials</option><option value="first">First names</option><option value="full">Full names</option></select></label>
-<label><input type="checkbox" id="inclO"><span id="ol">Include owner</span></label></div>
-<div class="row"><label style="flex:1;min-width:200px"><span id="minl">Min shared plays</span><input type="range" id="minw" min="1" max="10" step="1" value="2"><span id="minwv" style="min-width:18px;color:var(--text);font-weight:600">2</span></label><button id="dl">Download image</button></div>
+<label id="inclWrap"><input type="checkbox" id="inclO"><span id="ol">Include owner</span></label></div>
+<div class="row"><label style="flex:1;min-width:200px"><span id="minl">Min shared plays</span><input type="range" id="minw" min="1" max="10" step="1" value="2"><span id="minwv" style="min-width:18px;color:var(--text);font-weight:600">2</span></label></div>
+<div class="row"><button id="share" hidden>Share image</button><button id="dl">Download image</button><button id="cl">Copy link</button></div>
+<p id="msg" role="status"></p>
+<input id="linkbox" hidden readonly spellcheck="false" aria-label="Share link">
 <div id="g"></div>
 <div id="out"></div>
 <small id="sum"></small>
-<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Names are anonymized to initials by default, so check the setting before you share an image.</small>
+<div class="row" id="ownrow" hidden><button id="own">Use your own file</button></div>
+<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Names start as initials. Download image saves a picture. Copy link builds an address that contains only the names and links on screen, and nothing is uploaded.</small>
 </div></main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <script>
@@ -72,12 +81,35 @@ function uniq(labels,full,alt){
 const lab=i=>D.names[$('ns').value][i];
 const r=d=>3.5+Math.sqrt(d.v)*($('inclO').checked?1.2:1.5);
 const fmt=x=>mode===0?x+' plays':Math.round(x)+' h';
-function setMode(m){mode=m;sel=null;$('bp').setAttribute('aria-pressed',m===0);$('bh').setAttribute('aria-pressed',m===1);
-  const s=$('minw');if(m===0){s.min=1;s.max=10;s.value=2;$('minl').textContent='Min shared plays';}else{s.min=0;s.max=20;s.value=1;$('minl').textContent='Min shared hours';}
-  $('minwv').textContent=s.value;build();}
+const NAME={ini:'initials',first:'first names',full:'full names'};
+function rangeFor(m){
+  const s=$('minw');
+  if(m===0){s.min=1;s.max=10;$('minl').textContent='Min shared plays';}
+  else{s.min=0;s.max=20;$('minl').textContent='Min shared hours';}
+}
+function dataMin(m){
+  const k=m===0?2:3;let mn=Infinity;
+  D.E.forEach(e=>{if(e[k]>0&&e[k]<mn)mn=e[k];});
+  if(!Number.isFinite(mn))return m===0?1:0;
+  return m===0?Math.max(1,Math.floor(mn)):Math.max(0,Math.floor(mn));
+}
+function setMode(m,w){
+  mode=m;sel=null;
+  $('bp').setAttribute('aria-pressed',m===0);
+  $('bh').setAttribute('aria-pressed',m===1);
+  rangeFor(m);
+  const s=$('minw');
+  if(D.shared)s.min=Math.min(+s.max,dataMin(m));
+  const def=w==null?(m===0?2:1):w;
+  s.value=Math.max(+s.min,Math.min(+s.max,def));
+  $('minwv').textContent=s.value;
+  build();
+}
+function hideLink(){const b=$('linkbox');b.hidden=true;b.value='';}
 function build(){
+  note('');hideLink();
   const incl=$('inclO').checked,mw=+$('minw').value,k=mode===0?2:3,o=D.owner;
-  $('ol').textContent='Include '+lab(o);
+  if(o>=0)$('ol').textContent='Include '+lab(o);
   links=D.E.filter(e=>e[k]>=mw&&e[k]>0&&(incl||(e[0]!==o&&e[1]!==o))).map(e=>({source:e[0],target:e[1],w:e[k]}));
   const deg=new Set();links.forEach(l=>{deg.add(l.source);deg.add(l.target);});
   nodes=D.NV.map((n,i)=>({id:i,v:n[mode],plays:n[0],hrs:n[1]})).filter(d=>deg.has(d.id));
@@ -99,7 +131,7 @@ function build(){
   paint();
   if(sel===null)$('out').textContent='Tap a person to see who they play with most.'+(hidden>0?' '+hidden+' people hidden at this threshold.':'');else show(by[sel]);
 }
-function labels(){textS.text(d=>lab(d.id));$('ol').textContent='Include '+lab(D.owner);}
+function labels(){textS.text(d=>lab(d.id));if(D.owner>=0)$('ol').textContent='Include '+lab(D.owner);}
 function paint(){
   const nb=new Set();if(sel!==null)(adj[sel]||[]).forEach(a=>nb.add(a[0]));
   const q=l=>[l.source.id??l.source,l.target.id??l.target];
@@ -113,26 +145,133 @@ function show(d){
   const list=(adj[d.id]||[]).slice().sort((a,b)=>b[1]-a[1]).slice(0,5).map(a=>esc(lab(a[0]))+' ('+fmt(a[1])+')').join(', ');
   $('out').innerHTML='<b>'+esc(lab(d.id))+'</b>: '+d.plays+' plays, about '+Math.round(d.hrs)+' h. Most with '+list+'.';
 }
+function writeSum(){
+  if(D.shared){
+    $('sum').textContent=D.names.full.length+' players. Shared graph, with the names and links that were on screen, from a log of '+D.plays+' plays and about '+Math.round(D.hours)+' hours.';
+    return;
+  }
+  $('sum').textContent=D.names.full.length+' players, '+D.plays+' plays, about '+Math.round(D.hours)+' hours (estimated).';
+}
+function ownFile(){
+  $('ns').value='ini';$('ns').disabled=false;$('ns').title='';
+  $('inclWrap').hidden=false;$('ownrow').hidden=true;$('inclO').checked=false;
+  note('');
+}
 function load(f){
   $('err').textContent='';
   const rd=new FileReader();
   rd.onload=()=>{try{D=parse(JSON.parse(rd.result));}catch(e){$('err').textContent=e instanceof SyntaxError?'That file isn\'t valid JSON.':e.message;return;}
     $('drop').style.display='none';$('app').style.display='block';
-    $('sum').textContent=D.names.full.length+' players, '+D.plays+' plays, about '+Math.round(D.hours)+' hours (estimated).';
-    sel=null;setMode(0);};
+    ownFile();
+    if(location.hash.startsWith('#g=')){const u=new URL(location.href);u.hash='';history.replaceState(null,'',u.pathname+u.search);}
+    writeSum();sel=null;setMode(0);};
   rd.readAsText(f);
 }
-function download(){
+function note(t){$('msg').textContent=t||'';}
+function renderPng(){
   const cs=getComputedStyle(document.documentElement),v=n=>cs.getPropertyValue(n).trim();
   let s=new XMLSerializer().serializeToString(svg.node());
   ['accent','line','text','text2'].forEach(n=>{s=s.split('var(--'+n+')').join(v('--'+n));});
   s=s.replace('<svg','<svg font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif"').replace(/(<svg[^>]*>)/,'$1<rect width="100%" height="100%" fill="'+v('--bg')+'"/>');
   const img=new Image(),sc=2;
-  img.onload=()=>{const c=document.createElement('canvas');c.width=W*sc;c.height=H*sc;const x=c.getContext('2d');x.drawImage(img,0,0,c.width,c.height);
-    x.fillStyle=v('--text2');x.font=(11*sc)+'px system-ui,sans-serif';x.fillText('Made with tablemates',8*sc,(H-6)*sc);
-    c.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='tablemates.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);});};
-  img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s);
+  return new Promise((resolve,reject)=>{
+    img.onload=()=>{const c=document.createElement('canvas');c.width=W*sc;c.height=H*sc;const x=c.getContext('2d');x.drawImage(img,0,0,c.width,c.height);
+      x.fillStyle=v('--text2');x.font=(11*sc)+'px system-ui,sans-serif';x.fillText('Made with tablemates',8*sc,(H-6)*sc);
+      c.toBlob(b=>b?resolve(b):reject(new Error('image')),'image/png');};
+    img.onerror=()=>reject(new Error('image'));
+    img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s);
+  });
 }
+function saveBlob(b){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='tablemates.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);}
+function b64url(bytes){
+  let bin='';
+  for(let i=0;i<bytes.length;i+=0x8000)bin+=String.fromCharCode(...bytes.subarray(i,i+0x8000));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function fromB64url(s){
+  const pad=s.length%4===0?'':'='.repeat(4-(s.length%4));
+  const bin=atob(s.replace(/-/g,'+').replace(/_/g,'/')+pad);
+  const out=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);
+  return out;
+}
+async function pack(obj){
+  const raw=new TextEncoder().encode(JSON.stringify(obj));
+  if(typeof CompressionStream==='function'){
+    const gz=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+    return 'z'+b64url(gz);
+  }
+  return 'j'+b64url(raw);
+}
+async function textFromGzip(bytes){
+  const reader=new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).body.getReader();
+  const chunks=[];let n=0;
+  while(true){
+    const step=await reader.read();
+    if(step.done)break;
+    n+=step.value.length;
+    if(n>500000){await reader.cancel();throw new Error('big');}
+    chunks.push(step.value);
+  }
+  const out=new Uint8Array(n);let o=0;
+  chunks.forEach(c=>{out.set(c,o);o+=c.length;});
+  return new TextDecoder().decode(out);
+}
+async function unpack(payload){
+  if(!payload||payload.length>20000)throw new Error('big');
+  const bytes=fromB64url(payload.slice(1));
+  let text;
+  if(payload[0]==='z'){
+    if(typeof DecompressionStream!=='function')throw new Error('gzip');
+    text=await textFromGzip(bytes);
+  }else if(payload[0]==='j')text=new TextDecoder().decode(bytes);
+  else throw new Error('kind');
+  if(text.length>500000)throw new Error('big');
+  return JSON.parse(text);
+}
+function tenths(h){return h>0?Math.max(1,Math.round(h*10)):0;}
+function sharePayload(){
+  const incl=$('inclO').checked,mw=+$('minw').value,k=mode===0?2:3,o=D.owner;
+  const edges=D.E.filter(e=>e[k]>=mw&&e[k]>0&&(incl||(e[0]!==o&&e[1]!==o)));
+  const used=new Set();edges.forEach(e=>{used.add(e[0]);used.add(e[1]);});
+  const ids=[...used].sort((a,b)=>a-b);
+  if(!ids.length){const err=new Error('empty');throw err;}
+  const map=new Map(ids.map((id,i)=>[id,i]));
+  const labels=D.names[$('ns').value];
+  const hasO=map.has(o);
+  return {l:ids.map(i=>labels[i]),v:ids.map(i=>[D.NV[i][0],tenths(D.NV[i][1])]),e:edges.map(e=>[map.get(e[0]),map.get(e[1]),e[2],tenths(e[3])]),o:hasO?map.get(o):-1,m:mode,w:mw,i:hasO&&incl?1:0,s:$('ns').value,p:D.plays,h:Math.round(D.hours)};
+}
+function num(x){const v=+x;if(!Number.isFinite(v)||v<0||v>1e7)throw new Error('bad');return v;}
+function openShared(data){
+  if(!data||!Array.isArray(data.l)||!Array.isArray(data.v)||!Array.isArray(data.e))throw new Error('bad');
+  const n=data.l.length;
+  if(!n||n>5000||data.v.length!==n||data.e.length>20000)throw new Error('bad');
+  const labels=data.l.map(s=>String(s).slice(0,80));
+  const NV=data.v.map(row=>{if(!Array.isArray(row))throw new Error('bad');return [num(row[0]),num(row[1])/10];});
+  const E=data.e.map(row=>{
+    if(!Array.isArray(row))throw new Error('bad');
+    const a=num(row[0]),b=num(row[1]);
+    if((a|0)!==a||(b|0)!==b||a>=n||b>=n||a===b)throw new Error('bad');
+    return [a,b,num(row[2]),num(row[3])/10];
+  });
+  let owner=-1;
+  if(data.o!==-1&&data.o!=null){owner=num(data.o);if((owner|0)!==owner||owner>=n)throw new Error('bad');}
+  const style=['ini','first','full'].includes(data.s)?data.s:'ini';
+  D={names:{full:labels,first:labels,ini:labels},NV,E,owner,plays:Math.round(num(data.p||0)),hours:num(data.h||0),shared:true,style};
+  $('drop').style.display='none';$('app').style.display='block';$('err').textContent='';
+  $('ns').value=style;$('ns').disabled=true;$('ns').title='This shared graph only includes these names.';
+  $('inclWrap').hidden=owner<0;$('inclO').checked=!!data.i&&owner>=0;$('ownrow').hidden=false;
+  writeSum();setMode(data.m?1:0,num(data.w||0));
+}
+async function copyText(t){
+  if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(t);return;}catch(e){}}
+  const ta=document.createElement('textarea');
+  ta.value=t;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.left='-9999px';
+  document.body.appendChild(ta);ta.focus();ta.select();
+  const ok=document.execCommand('copy');ta.remove();
+  if(!ok)throw new Error('copy');
+}
+let copiedT;
 $('pick').onclick=()=>$('file').click();
 $('file').onchange=e=>e.target.files[0]&&load(e.target.files[0]);
 const dz=$('drop');
@@ -141,7 +280,63 @@ const dz=$('drop');
 dz.addEventListener('drop',e=>e.dataTransfer.files[0]&&load(e.dataTransfer.files[0]));
 $('bp').onclick=()=>setMode(0);$('bh').onclick=()=>setMode(1);
 $('inclO').onchange=()=>{sel=null;build();};
-$('ns').onchange=()=>{labels();if(sel!==null){const d=nodes.find(n=>n.id===sel);d&&show(d);}};
+$('ns').onchange=()=>{note('');labels();if(sel!==null){const d=nodes.find(n=>n.id===sel);d&&show(d);}};
 $('minw').oninput=()=>{$('minwv').textContent=$('minw').value;build();};
-$('dl').onclick=download;
+$('dl').onclick=async()=>{note('');try{saveBlob(await renderPng());}catch(e){note('Couldn’t make the image. Try again.');}};
+$('share').onclick=async()=>{
+  note('');
+  try{
+    const blob=await renderPng();
+    const file=new File([blob],'tablemates.png',{type:'image/png'});
+    const payload={files:[file],title:'tablemates',text:'Who plays with whom'};
+    if(navigator.canShare&&navigator.canShare(payload)){
+      try{await navigator.share(payload);return;}catch(e){if(e.name==='AbortError')return;}
+    }
+    saveBlob(blob);note('Image downloaded.');
+  }catch(e){note('Couldn’t make the image. Try again.');}
+};
+function linkMessage(href,style){
+  let m='Link copied. It includes the '+(NAME[style]||'names')+' on screen.';
+  if(location.protocol==='file:')m+=' It points at this file on your computer, so it will only open here.';
+  else if(href.length>4000)m+=' The address is long enough that some chat apps will truncate it, so send the image if that happens.';
+  return m;
+}
+function markCopied(){$('cl').textContent='Copied';clearTimeout(copiedT);copiedT=setTimeout(()=>$('cl').textContent='Copy link',2000);}
+$('cl').onclick=()=>{
+  let obj;
+  try{obj=sharePayload();}catch(e){note('Lower the minimum until a few people show, then copy a link.');return;}
+  const hrefPromise=pack(obj).then(packed=>{const u=new URL(location.href);u.hash='g='+packed;if(u.href.length>12000)throw new Error('long');return u.href;});
+  const finish=href=>{hideLink();markCopied();note(linkMessage(href,obj.s));};
+  const showBox=href=>{const box=$('linkbox');box.hidden=false;box.value=href;box.focus();box.select();note('Select the link below and copy it.');};
+  const tooBig='This view has too many players for a link. Download the image to share it.';
+  const fail=e=>{if(e&&e.message==='long'){hideLink();note(tooBig);return;}hrefPromise.then(showBox).catch(err=>note(err&&err.message==='long'?tooBig:'Couldn’t make the link.'));};
+  const writeFallback=href=>copyText(href).then(()=>finish(href)).catch(()=>showBox(href));
+  if(navigator.clipboard&&window.ClipboardItem&&window.isSecureContext){
+    try{
+      navigator.clipboard.write([new ClipboardItem({'text/plain':hrefPromise.then(href=>new Blob([href],{type:'text/plain'}))})])
+        .then(()=>hrefPromise).then(finish).catch(()=>hrefPromise.then(writeFallback).catch(fail));
+      return;
+    }catch(e){}
+  }
+  hrefPromise.then(writeFallback).catch(fail);
+};
+$('own').onclick=()=>{
+  D=null;sel=null;
+  $('app').style.display='none';$('drop').style.display='';$('err').textContent='';
+  ownFile();
+  const u=new URL(location.href);u.hash='';history.replaceState(null,'',u.pathname+u.search);
+};
+try{if(navigator.canShare&&navigator.canShare({files:[new File(['x'],'t.png',{type:'image/png'})]}))$('share').hidden=false;}catch(e){}
+function bootHash(){
+  if(!location.hash.startsWith('#g='))return;
+  const payload=location.hash.slice(3);
+  $('drop').style.display='none';
+  unpack(payload).then(data=>{if(location.hash.slice(3)!==payload)return;openShared(data);}).catch(()=>{
+    if(location.hash.slice(3)!==payload)return;
+    $('drop').style.display='';$('app').style.display='none';
+    $('err').textContent='This share link is damaged or incomplete. Choose your BG Stats file to build a new graph.';
+  });
+}
+bootHash();
+window.addEventListener('hashchange',bootHash);
 </script></body></html>
