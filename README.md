@@ -18,7 +18,7 @@ Pick your BG Stats export file and tablemates draws an interactive network graph
 - Filter out weak links with the minimum slider.
 - Tap a person to see their top play partners.
 - Share or download the graph as an image.
-- Copy a link that reopens this same view. The link carries only the names on screen and the links you’re looking at, so check the name setting first. Very large graphs should be sent as an image.
+- Copy a link that reopens this view. It carries the names on screen and the links you’re looking at, so check the name setting first. A very large view keeps the strongest links so the address stays short enough to send. A picture is the better share when the graph is huge.
 
 ## How hours are estimated
 

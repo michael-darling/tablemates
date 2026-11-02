@@ -41,7 +41,7 @@ small{display:block;margin-top:14px;color:var(--text2);font-size:13px}
 <div id="out"></div>
 <small id="sum"></small>
 <div class="row" id="ownrow" hidden><button id="own">Use your own file</button></div>
-<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Names start as initials. Download image saves a picture. Copy link builds an address that contains only the names and links on screen, and nothing is uploaded.</small>
+<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Names start as initials. Download image saves a picture. Copy link builds an address from the names and links on screen. A very large view keeps the strongest links so the address can be sent, and nothing is uploaded.</small>
 </div></main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <script>
@@ -195,13 +195,97 @@ function fromB64url(s){
   for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);
   return out;
 }
-async function pack(obj){
-  const raw=new TextEncoder().encode(JSON.stringify(obj));
-  if(typeof CompressionStream==='function'){
-    const gz=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
-    return 'z'+b64url(gz);
+function encodeBinary(obj){
+  const enc=new TextEncoder();
+  const names=obj.l.map(s=>enc.encode(String(s).slice(0,80)));
+  const n=names.length,m=obj.e.length,small=n<256;
+  let size=13;
+  names.forEach(b=>size+=1+b.length+4);
+  size+=m*(small?6:8);
+  const out=new Uint8Array(size),view=new DataView(out.buffer);
+  let o=0;
+  const u8=v=>{out[o++]=v&255;};
+  const u16=v=>{view.setUint16(o,Math.max(0,Math.min(65535,v|0)));o+=2;};
+  u8(1);
+  const style={ini:0,first:1,full:2}[obj.s]||0;
+  u8((obj.m?1:0)|(obj.i?2:0)|(obj.o>=0?4:0)|(style<<3)|(small?32:0));
+  u16(n);u16(m);u16(obj.p||0);u16(obj.h||0);
+  u8(Math.max(0,Math.min(255,obj.w|0)));
+  u16(obj.o>=0?obj.o:0);
+  for(let i=0;i<n;i++){
+    u8(names[i].length);out.set(names[i],o);o+=names[i].length;
+    u16(obj.v[i][0]);u16(obj.v[i][1]);
   }
-  return 'j'+b64url(raw);
+  for(const e of obj.e){
+    if(small){u8(e[0]);u8(e[1]);}else{u16(e[0]);u16(e[1]);}
+    u16(e[2]);u16(e[3]);
+  }
+  if(o!==size)throw new Error('bad');
+  return out;
+}
+function decodeBinary(buf){
+  if(!buf||buf.length<13||buf[0]!==1)throw new Error('bad');
+  const view=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
+  let o=1;
+  const need=k=>{if(o+k>buf.length)throw new Error('bad');};
+  const flags=buf[o++],small=!!(flags&32);
+  const style=['ini','first','full'][(flags>>3)&3]||'ini';
+  const u16=()=>{need(2);const v=view.getUint16(o);o+=2;return v;};
+  const n=u16(),m=u16(),p=u16(),h=u16();
+  need(1);const w=buf[o++];
+  const owner=u16();
+  if(n<1||n>5000||m>20000)throw new Error('bad');
+  const dec=new TextDecoder(),l=[],v=[];
+  for(let i=0;i<n;i++){
+    need(1);const len=buf[o++];need(len);
+    l.push(dec.decode(buf.subarray(o,o+len)));o+=len;
+    v.push([u16(),u16()]);
+  }
+  const e=[];
+  for(let i=0;i<m;i++){
+    const a=small?(need(1),buf[o++]):u16();
+    const b=small?(need(1),buf[o++]):u16();
+    e.push([a,b,u16(),u16()]);
+  }
+  if(o!==buf.length)throw new Error('bad');
+  return {l,v,e,o:(flags&4)?owner:-1,m:(flags&1)?1:0,w,i:(flags&2)?1:0,s:style,p,h};
+}
+async function deflateRaw(bytes){
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+}
+async function pack(obj){
+  const bin=encodeBinary(obj);
+  if(typeof CompressionStream==='function')return 'd'+b64url(await deflateRaw(bin));
+  return 'r'+b64url(bin);
+}
+function dropWeakest(obj){
+  if(obj.e.length<=12)return null;
+  const key=obj.m?3:2;
+  const ranked=obj.e.slice().sort((a,b)=>b[key]-a[key]||a[0]-b[0]||a[1]-b[1]);
+  const keep=Math.max(12,Math.ceil(ranked.length*0.75));
+  if(keep>=ranked.length)return null;
+  const edges=ranked.slice(0,keep),used=new Set();
+  edges.forEach(e=>{used.add(e[0]);used.add(e[1]);});
+  const ids=[...used].sort((a,b)=>a-b);
+  const map=new Map(ids.map((id,i)=>[id,i]));
+  const hasO=map.has(obj.o);
+  return {l:ids.map(i=>obj.l[i]),v:ids.map(i=>obj.v[i]),e:edges.map(e=>[map.get(e[0]),map.get(e[1]),e[2],e[3]]),o:hasO?map.get(obj.o):-1,m:obj.m,w:obj.w,i:hasO&&obj.i?1:0,s:obj.s,p:obj.p,h:obj.h};
+}
+async function packToSend(obj){
+  let cur=obj,trimmed=false;
+  while(cur.e.length>20000){
+    const next=dropWeakest(cur);
+    if(!next)break;
+    cur=next;trimmed=true;
+  }
+  let packed=await pack(cur);
+  while(true){
+    const u=new URL(location.href);u.hash='g='+packed;
+    if(u.href.length<=2000||cur.e.length<=12)return {href:u.href,trimmed};
+    const next=dropWeakest(cur);
+    if(!next)return {href:u.href,trimmed};
+    cur=next;packed=await pack(cur);trimmed=true;
+  }
 }
 async function textFromGzip(bytes){
   const reader=new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).body.getReader();
@@ -220,6 +304,11 @@ async function textFromGzip(bytes){
 async function unpack(payload){
   if(!payload||payload.length>20000)throw new Error('big');
   const bytes=fromB64url(payload.slice(1));
+  if(payload[0]==='d'||payload[0]==='r'){
+    const bin=payload[0]==='d'?await inflateRaw(bytes):bytes;
+    if(bin.length>500000)throw new Error('big');
+    return decodeBinary(bin);
+  }
   let text;
   if(payload[0]==='z'){
     if(typeof DecompressionStream!=='function')throw new Error('gzip');
@@ -228,6 +317,21 @@ async function unpack(payload){
   else throw new Error('kind');
   if(text.length>500000)throw new Error('big');
   return JSON.parse(text);
+}
+async function inflateRaw(bytes){
+  if(typeof DecompressionStream!=='function')throw new Error('gzip');
+  const reader=new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).body.getReader();
+  const chunks=[];let n=0;
+  while(true){
+    const step=await reader.read();
+    if(step.done)break;
+    n+=step.value.length;
+    if(n>500000){await reader.cancel();throw new Error('big');}
+    chunks.push(step.value);
+  }
+  const out=new Uint8Array(n);let o=0;
+  chunks.forEach(c=>{out.set(c,o);o+=c.length;});
+  return out;
 }
 function tenths(h){return h>0?Math.max(1,Math.round(h*10)):0;}
 function sharePayload(){
@@ -295,30 +399,33 @@ $('share').onclick=async()=>{
     saveBlob(blob);note('Image downloaded.');
   }catch(e){note('Couldn’t make the image. Try again.');}
 };
-function linkMessage(href,style){
-  let m='Link copied. It includes the '+(NAME[style]||'names')+' on screen.';
+function linkMessage(href,style,trimmed){
+  const who=NAME[style]||'names';
+  let m=trimmed
+    ?'Link copied. It uses the '+who+' on screen and the strongest links, so the address stays short enough to send.'
+    :'Link copied. It includes the '+who+' on screen.';
   if(location.protocol==='file:')m+=' It points at this file on your computer, so it will only open here.';
-  else if(href.length>4000)m+=' The address is long enough that some chat apps will truncate it, so send the image if that happens.';
+  else if(!trimmed&&href.length>4000)m+=' The address is long enough that some chat apps will truncate it, so send the image if that happens.';
   return m;
 }
 function markCopied(){$('cl').textContent='Copied';clearTimeout(copiedT);copiedT=setTimeout(()=>$('cl').textContent='Copy link',2000);}
 $('cl').onclick=()=>{
   let obj;
   try{obj=sharePayload();}catch(e){note('Lower the minimum until a few people show, then copy a link.');return;}
-  const hrefPromise=pack(obj).then(packed=>{const u=new URL(location.href);u.hash='g='+packed;if(u.href.length>12000)throw new Error('long');return u.href;});
-  const finish=href=>{hideLink();markCopied();note(linkMessage(href,obj.s));};
-  const showBox=href=>{const box=$('linkbox');box.hidden=false;box.value=href;box.focus();box.select();note('Select the link below and copy it.');};
+  const built=packToSend(obj).then(r=>{if(r.href.length>12000)throw new Error('long');return r;});
+  const finish=r=>{hideLink();markCopied();note(linkMessage(r.href,obj.s,r.trimmed));};
+  const showBox=r=>{const box=$('linkbox');box.hidden=false;box.value=r.href;box.focus();box.select();note(r.trimmed?'The link below is selected. It uses the '+(NAME[obj.s]||'names')+' on screen and the strongest links.':'Select the link below and copy it.');};
   const tooBig='This view has too many players for a link. Download the image to share it.';
-  const fail=e=>{if(e&&e.message==='long'){hideLink();note(tooBig);return;}hrefPromise.then(showBox).catch(err=>note(err&&err.message==='long'?tooBig:'Couldn’t make the link.'));};
-  const writeFallback=href=>copyText(href).then(()=>finish(href)).catch(()=>showBox(href));
+  const fail=e=>{if(e&&e.message==='long'){hideLink();note(tooBig);return;}built.then(showBox).catch(err=>note(err&&err.message==='long'?tooBig:'Couldn’t make the link.'));};
+  const writeFallback=r=>copyText(r.href).then(()=>finish(r)).catch(()=>showBox(r));
   if(navigator.clipboard&&window.ClipboardItem&&window.isSecureContext){
     try{
-      navigator.clipboard.write([new ClipboardItem({'text/plain':hrefPromise.then(href=>new Blob([href],{type:'text/plain'}))})])
-        .then(()=>hrefPromise).then(finish).catch(()=>hrefPromise.then(writeFallback).catch(fail));
+      navigator.clipboard.write([new ClipboardItem({'text/plain':built.then(r=>new Blob([r.href],{type:'text/plain'}))})])
+        .then(()=>built).then(finish).catch(()=>built.then(writeFallback).catch(fail));
       return;
     }catch(e){}
   }
-  hrefPromise.then(writeFallback).catch(fail);
+  built.then(writeFallback).catch(fail);
 };
 $('own').onclick=()=>{
   D=null;sel=null;
