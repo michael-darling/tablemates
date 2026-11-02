@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tablemates: who plays with whom</title>
+<style>
+:root{--bg:#fbfaf7;--surface:#f1efe8;--text:#1d1d1b;--text2:#5f5e5a;--line:#b4b2a9;--accent:#2a78d6;--border:rgba(0,0,0,.18);color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#1a1a19;--surface:#262624;--text:#f0efec;--text2:#c3c2b7;--line:#5f5e5a;--accent:#3987e5;--border:rgba(255,255,255,.22);color-scheme:dark}}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:680px;margin:0 auto;padding:20px 16px 32px}
+h1{font-size:26px;font-weight:600;margin:0 0 4px;line-height:1.2}
+p{margin:0 0 14px;color:var(--text2);font-size:15px}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:10px;font-size:14px;color:var(--text2)}
+button,select{font:inherit;font-size:14px;padding:8px 12px;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:8px;cursor:pointer}
+button.seg{flex:1}button[aria-pressed="true"]{border-color:var(--text);font-weight:600}
+label{display:flex;align-items:center;gap:8px}input[type=range]{flex:1;accent-color:var(--accent)}
+#drop{border:1.5px dashed var(--border);border-radius:12px;padding:28px 16px;text-align:center;color:var(--text2);margin-bottom:14px}
+#drop.over{border-color:var(--accent)}
+#app{display:none}svg{display:block;width:100%;height:auto}
+#out{min-height:52px;margin-top:10px;padding:10px 12px;background:var(--surface);border-radius:8px;font-size:14px;color:var(--text2)}
+#out b{color:var(--text);font-weight:600}
+#err{color:#d03b3b;font-size:14px;margin-top:8px}
+small{display:block;margin-top:14px;color:var(--text2);font-size:13px}
+</style></head><body><main>
+<h1>tablemates</h1>
+<p>See who plays with whom most often. Pick your BG Stats export file and the graph is built in your browser. Nothing is uploaded anywhere.</p>
+<div id="drop"><p style="margin:0 0 10px">Drop your BGStatsExport.json here, or choose it from your device.</p><button id="pick">Choose file</button><input type="file" id="file" accept=".json,application/json" hidden><div id="err"></div></div>
+<div id="app">
+<div class="row"><button class="seg" id="bp" aria-pressed="true">Plays</button><button class="seg" id="bh" aria-pressed="false">Est. hours</button></div>
+<div class="row"><label>Names <select id="ns"><option value="ini">Initials</option><option value="first">First names</option><option value="full">Full names</option></select></label>
+<label><input type="checkbox" id="inclO"><span id="ol">Include owner</span></label></div>
+<div class="row"><label style="flex:1;min-width:200px"><span id="minl">Min shared plays</span><input type="range" id="minw" min="1" max="10" step="1" value="2"><span id="minwv" style="min-width:18px;color:var(--text);font-weight:600">2</span></label><button id="dl">Download image</button></div>
+<div id="g"></div>
+<div id="out"></div>
+<small id="sum"></small>
+<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Names are anonymized to initials by default, so check the setting before you share an image.</small>
+</div></main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const W=560,H=480;
+const svg=d3.select('#g').append('svg').attr('viewBox','0 0 '+W+' '+H).attr('role','img').attr('aria-label','Network of players linked by shared plays');
+const gl=svg.append('g'),gn=svg.append('g'),gt=svg.append('g');
+let D=null,mode=0,sel=null,nodes=[],links=[],lineS,circS,textS,adj={};
+function parse(j){
+  const P={};(j.players||[]).forEach(p=>{if(!p.isAnonymous&&p.name)P[p.id]=p.name.trim();});
+  const G={};(j.games||[]).forEach(g=>G[g.id]=g);
+  const plays=(j.plays||[]).filter(p=>!p.ignored);
+  if(!plays.length)throw new Error('No plays found in this file.');
+  const logged={};plays.forEach(p=>{if(p.durationMin>0)(logged[p.gameRefId]=logged[p.gameRefId]||[]).push(p.durationMin);});
+  const est=p=>{if(p.durationMin>0)return p.durationMin;const l=logged[p.gameRefId];if(l)return l.reduce((a,b)=>a+b,0)/l.length;
+    const g=G[p.gameRefId]||{},lo=g.minPlayTime||0,hi=g.maxPlayTime||0;return lo&&hi?(lo+hi)/2:Math.max(lo,hi);};
+  const cnt={},hrs={},pc={},ph={};
+  plays.forEach(p=>{const m=est(p)/60;
+    const ids=[...new Set((p.playerScores||[]).map(s=>s.playerRefId).filter(i=>P[i]))].sort((a,b)=>a-b);
+    ids.forEach(i=>{cnt[i]=(cnt[i]||0)+1;hrs[i]=(hrs[i]||0)+m;});
+    for(let a=0;a<ids.length;a++)for(let b=a+1;b<ids.length;b++){const k=ids[a]+'_'+ids[b];pc[k]=(pc[k]||0)+1;ph[k]=(ph[k]||0)+m;}});
+  const keep=Object.keys(cnt).map(Number),pos={};keep.forEach((id,k)=>pos[id]=k);
+  if(!keep.length)throw new Error('No named players found in this file.');
+  const full=keep.map(i=>P[i]);
+  const first=uniq(full.map(n=>n.split(/\s+/)[0]),full,(n)=>{const t=n.split(/\s+/);return t[0]+' '+(t[t.length-1][0]||'')+'.';});
+  const ini=uniq(full.map(n=>{const t=n.split(/\s+/).map(x=>x.replace(/[^\p{L}]/gu,'')).filter(Boolean);return ((t[0]||'?')[0]+(t.length>1?t[t.length-1][0]:'')).toUpperCase();}),full);
+  const NV=keep.map(i=>[cnt[i],hrs[i]]);
+  const E=Object.keys(pc).map(k=>{const[a,b]=k.split('_').map(Number);return[pos[a],pos[b],pc[k],ph[k]];});
+  const owner=NV.reduce((b,n,i)=>n[0]>NV[b][0]?i:b,0);
+  return{names:{full,first,ini},NV,E,owner,plays:plays.length,hours:plays.reduce((s,p)=>s+est(p)/60,0)};
+}
+function uniq(labels,full,alt){
+  const out=labels.slice(),c={};labels.forEach(l=>c[l]=(c[l]||0)+1);
+  if(alt)out.forEach((l,i)=>{if(c[l]>1)out[i]=alt(full[i]);});
+  const seen={};return out.map(l=>{seen[l]=(seen[l]||0)+1;return seen[l]>1?l+seen[l]:l;});
+}
+const lab=i=>D.names[$('ns').value][i];
+const r=d=>3.5+Math.sqrt(d.v)*($('inclO').checked?1.2:1.5);
+const fmt=x=>mode===0?x+' plays':Math.round(x)+' h';
+function setMode(m){mode=m;sel=null;$('bp').setAttribute('aria-pressed',m===0);$('bh').setAttribute('aria-pressed',m===1);
+  const s=$('minw');if(m===0){s.min=1;s.max=10;s.value=2;$('minl').textContent='Min shared plays';}else{s.min=0;s.max=20;s.value=1;$('minl').textContent='Min shared hours';}
+  $('minwv').textContent=s.value;build();}
+function build(){
+  const incl=$('inclO').checked,mw=+$('minw').value,k=mode===0?2:3,o=D.owner;
+  $('ol').textContent='Include '+lab(o);
+  links=D.E.filter(e=>e[k]>=mw&&e[k]>0&&(incl||(e[0]!==o&&e[1]!==o))).map(e=>({source:e[0],target:e[1],w:e[k]}));
+  const deg=new Set();links.forEach(l=>{deg.add(l.source);deg.add(l.target);});
+  nodes=D.NV.map((n,i)=>({id:i,v:n[mode],plays:n[0],hrs:n[1]})).filter(d=>deg.has(d.id));
+  const hidden=D.NV.length-(incl?0:1)-nodes.length;
+  adj={};links.forEach(l=>{(adj[l.source]=adj[l.source]||[]).push([l.target,l.w]);(adj[l.target]=adj[l.target]||[]).push([l.source,l.w]);});
+  const sim=d3.forceSimulation(nodes).force('link',d3.forceLink(links).id(d=>d.id).distance(l=>52-Math.min(24,l.w)).strength(l=>Math.min(0.8,0.1+l.w/20)))
+    .force('charge',d3.forceManyBody().strength(-110)).force('x',d3.forceX(W/2).strength(0.07)).force('y',d3.forceY(H/2).strength(0.07))
+    .force('collide',d3.forceCollide(d=>r(d)+6)).stop();
+  for(let i=0;i<400;i++)sim.tick();
+  nodes.forEach(d=>{d.x=Math.max(r(d)+6,Math.min(W-r(d)-6,d.x));d.y=Math.max(r(d)+14,Math.min(H-r(d)-6,d.y));});
+  const by=Object.fromEntries(nodes.map(d=>[d.id,d]));
+  gl.selectAll('*').remove();gn.selectAll('*').remove();gt.selectAll('*').remove();
+  const id=v=>v.id??v;
+  lineS=gl.selectAll('line').data(links).join('line').attr('x1',l=>by[id(l.source)].x).attr('y1',l=>by[id(l.source)].y).attr('x2',l=>by[id(l.target)].x).attr('y2',l=>by[id(l.target)].y).attr('stroke-width',l=>0.6+Math.sqrt(l.w)*0.6);
+  circS=gn.selectAll('circle').data(nodes).join('circle').attr('cx',d=>d.x).attr('cy',d=>d.y).attr('r',r).attr('fill','var(--accent)').style('cursor','pointer').on('click',(e,d)=>{sel=d.id;paint();show(d);});
+  textS=gt.selectAll('text').data(nodes).join('text').attr('x',d=>d.x).attr('y',d=>d.y-r(d)-3).attr('text-anchor','middle').attr('font-size',12).attr('fill','var(--text)').style('pointer-events','none');
+  labels();
+  if(sel!==null&&!by[sel])sel=null;
+  paint();
+  if(sel===null)$('out').textContent='Tap a person to see who they play with most.'+(hidden>0?' '+hidden+' people hidden at this threshold.':'');else show(by[sel]);
+}
+function labels(){textS.text(d=>lab(d.id));$('ol').textContent='Include '+lab(D.owner);}
+function paint(){
+  const nb=new Set();if(sel!==null)(adj[sel]||[]).forEach(a=>nb.add(a[0]));
+  const q=l=>[l.source.id??l.source,l.target.id??l.target];
+  lineS.attr('stroke',l=>{const[s,t]=q(l);return sel!==null&&(s===sel||t===sel)?'var(--accent)':'var(--line)';}).attr('stroke-opacity',l=>{const[s,t]=q(l);return sel===null?0.55:(s===sel||t===sel?0.95:0.12);});
+  circS.attr('fill-opacity',d=>sel===null||d.id===sel||nb.has(d.id)?0.9:0.2).attr('stroke',d=>d.id===sel?'var(--text)':'none').attr('stroke-width',1.5);
+  const top=nodes.map(d=>d.v).sort((a,b)=>b-a)[Math.min(11,nodes.length-1)]||0;
+  textS.style('display',d=>(sel===null?d.v>=top:(d.id===sel||nb.has(d.id)))?'block':'none');
+}
+function show(d){
+  const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const list=(adj[d.id]||[]).slice().sort((a,b)=>b[1]-a[1]).slice(0,5).map(a=>esc(lab(a[0]))+' ('+fmt(a[1])+')').join(', ');
+  $('out').innerHTML='<b>'+esc(lab(d.id))+'</b>: '+d.plays+' plays, about '+Math.round(d.hrs)+' h. Most with '+list+'.';
+}
+function load(f){
+  $('err').textContent='';
+  const rd=new FileReader();
+  rd.onload=()=>{try{D=parse(JSON.parse(rd.result));}catch(e){$('err').textContent=e instanceof SyntaxError?'That file isn\'t valid JSON.':e.message;return;}
+    $('drop').style.display='none';$('app').style.display='block';
+    $('sum').textContent=D.names.full.length+' players, '+D.plays+' plays, about '+Math.round(D.hours)+' hours (estimated).';
+    sel=null;setMode(0);};
+  rd.readAsText(f);
+}
+function download(){
+  const cs=getComputedStyle(document.documentElement),v=n=>cs.getPropertyValue(n).trim();
+  let s=new XMLSerializer().serializeToString(svg.node());
+  ['accent','line','text','text2'].forEach(n=>{s=s.split('var(--'+n+')').join(v('--'+n));});
+  s=s.replace('<svg','<svg font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif"').replace(/(<svg[^>]*>)/,'$1<rect width="100%" height="100%" fill="'+v('--bg')+'"/>');
+  const img=new Image(),sc=2;
+  img.onload=()=>{const c=document.createElement('canvas');c.width=W*sc;c.height=H*sc;const x=c.getContext('2d');x.drawImage(img,0,0,c.width,c.height);
+    x.fillStyle=v('--text2');x.font=(11*sc)+'px system-ui,sans-serif';x.fillText('Made with tablemates',8*sc,(H-6)*sc);
+    c.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='tablemates.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);});};
+  img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s);
+}
+$('pick').onclick=()=>$('file').click();
+$('file').onchange=e=>e.target.files[0]&&load(e.target.files[0]);
+const dz=$('drop');
+['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('over');}));
+['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('over');}));
+dz.addEventListener('drop',e=>e.dataTransfer.files[0]&&load(e.dataTransfer.files[0]));
+$('bp').onclick=()=>setMode(0);$('bh').onclick=()=>setMode(1);
+$('inclO').onchange=()=>{sel=null;build();};
+$('ns').onchange=()=>{labels();if(sel!==null){const d=nodes.find(n=>n.id===sel);d&&show(d);}};
+$('minw').oninput=()=>{$('minwv').textContent=$('minw').value;build();};
+$('dl').onclick=download;
+</script></body></html>
