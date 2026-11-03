@@ -32,7 +32,7 @@ In the repo settings, open Pages, pick the `main` branch and the root folder, an
 
 ## Privacy
 
-The graph is built in the browser. The file stays on your device. A copied link stores the graph in the address itself (the part after `#`), which the browser does not send to the server. Shorten link sends that address to is.gd, which stores it. Names are initials by default, and both links include only the names and year range currently shown.
+The graph is built in the browser, using drawing code included in the page. The file stays on your device. A copied link stores the graph in the address itself (the part after `#`), which the browser does not send to the server. Shorten link sends that address to is.gd, which stores it. Names are initials by default, and both links include only the names and year range currently shown.
 
 ## Not affiliated
 
