@@ -19,7 +19,7 @@ Pick your BG Stats export file and tablemates draws an interactive network graph
 - Filter out weak links with the minimum slider.
 - Tap a person to see their top play partners.
 - Share or download the graph as an image.
-- Copy a link that reopens this view. It carries the names on screen, the year range, and the links you’re looking at, so check the name setting first. The address stays on your device. A very large view keeps the strongest links so the address stays short enough to send. A picture is the better share when the graph is huge.
+- Copy a link that reopens this view. It carries the names on screen, the year range, and the links you’re looking at, so check the name setting first. The address stays on your device. A very large view keeps the strongest links so the address stays short enough to send. A count past 65,535 plays or about 6,554 hours is capped, and the confirmation says so. A picture is the better share when the graph is huge.
 - Shorten that link when you want to text it. Shorten link sends the address to [is.gd](https://is.gd), which stores it and hands back a short link.
 
 ## How hours are estimated

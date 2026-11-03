@@ -43,7 +43,7 @@ small{display:block;margin-top:14px;color:var(--text2);font-size:13px}
 <div id="out" aria-live="polite"></div>
 <small id="sum"></small>
 <div class="row" id="ownrow" hidden><button id="own">Use your own file</button></div>
-<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Years limits the graph to that range. The full span is the whole file, including plays with no date. Names start as initials. Download image saves a picture. Copy link builds an address from the names, years, and links on screen, and that address stays on this device. Shorten link sends that address to is.gd, which stores it and hands back a short link. A very large view keeps the strongest links.</small>
+<small>Hours are estimates: each play uses its logged time when there is one, otherwise the average logged time for that game, otherwise the midpoint of the BoardGameGeek play-time range. Years limits the graph to that range. The full span is the whole file, including plays with no date. Names start as initials. Download image saves a picture. Copy link builds an address from the names, years, and links on screen, and that address stays on this device. Shorten link sends that address to is.gd, which stores it and hands back a short link. A very large view keeps the strongest links. A count past 65,535 plays or about 6,554 hours is capped, and the confirmation says so.</small>
 </div></main>
 <!-- Drawing code from D3, so the page works without another site. d3-dispatch 3.0.1, d3-quadtree 3.0.1, d3-timer 3.0.1, d3-selection 3.0.0, d3-force 3.0.0. Copyright 2010-2021 Mike Bostock. https://d3js.org -->
 <script>
@@ -320,7 +320,7 @@ function encodeBinary(obj){
   const out=new Uint8Array(size),view=new DataView(out.buffer);
   let o=0;
   const u8=v=>{out[o++]=v&255;};
-  const u16=v=>{view.setUint16(o,Math.max(0,Math.min(65535,v|0)));o+=2;};
+  const u16=v=>{const n=+v;view.setUint16(o,Number.isFinite(n)?Math.max(0,Math.min(65535,Math.floor(n))):0);o+=2;};
   u8(2);
   const style={ini:0,first:1,full:2}[obj.s]||0;
   u8((obj.m?1:0)|(obj.i?2:0)|(obj.o>=0?4:0)|(style<<3)|(small?32:0));
@@ -399,9 +399,9 @@ async function packToSend(obj){
   let packed=await pack(cur);
   while(true){
     const u=new URL(location.href);u.hash='g='+packed;
-    if(u.href.length<=2000||cur.e.length<=12)return {href:u.href,trimmed};
+    if(u.href.length<=2000||cur.e.length<=12)return {href:u.href,trimmed,clamped:countCap(cur)};
     const next=dropWeakest(cur);
-    if(!next)return {href:u.href,trimmed};
+    if(!next)return {href:u.href,trimmed,clamped:countCap(cur)};
     cur=next;packed=await pack(cur);trimmed=true;
   }
 }
@@ -452,6 +452,24 @@ async function inflateRaw(bytes){
   return out;
 }
 function tenths(h){return h>0?Math.max(1,Math.round(h*10)):0;}
+function countCap(obj){
+  const over=v=>Number.isFinite(+v)&&+v>65535;
+  let plays=over(obj.p),fine=false,total=over(obj.h);
+  obj.v.forEach(row=>{if(over(row[0]))plays=true;if(over(row[1]))fine=true;});
+  obj.e.forEach(e=>{if(over(e[2]))plays=true;if(over(e[3]))fine=true;});
+  if(plays&&fine)return 'both';
+  if(plays)return 'plays';
+  if(fine)return 'hours';
+  if(total)return 'total';
+  return '';
+}
+function clampNote(kind){
+  if(kind==='both')return ' A count was capped at 65,535 plays or about 6,554 hours, so this link undercounts it.';
+  if(kind==='plays')return ' A play count was capped at 65,535, so this link undercounts it.';
+  if(kind==='hours')return ' An hour count was capped at about 6,554 hours, so this link undercounts it.';
+  if(kind==='total')return ' The hour total was capped at 65,535, so this link undercounts it.';
+  return '';
+}
 function sharePayload(){
   const incl=$('inclO').checked,mw=+$('minw').value,k=mode===0?2:3,o=D.owner;
   const edges=D.E.filter(e=>e[k]>=mw&&e[k]>0&&(incl||(e[0]!==o&&e[1]!==o)));
@@ -529,20 +547,20 @@ $('share').onclick=async()=>{
     saveBlob(blob);note('Image downloaded.');
   }catch(e){note('Couldn’t make the image. Try again.');}
 };
-function linkMessage(href,style,trimmed){
+function linkMessage(href,style,trimmed,kind){
   const who=NAME[style]||'names',scope=windowPhrase()? ' for '+windowPhrase():'';
   let m=trimmed
     ?'Link copied. It uses the '+who+' on screen'+scope+' and the strongest links, so the address stays short enough to send.'
     :'Link copied. It includes the '+who+' on screen'+scope+'.';
   if(location.protocol==='file:')m+=' It points at this file on your computer, so it will only open here.';
   else if(!trimmed&&href.length>4000)m+=' The address is long enough that some chat apps will truncate it, so send the image if that happens.';
-  return m;
+  return m+clampNote(kind);
 }
 function markCopied(){$('cl').textContent='Copied';clearTimeout(copiedT);copiedT=setTimeout(()=>$('cl').textContent='Copy link',2000);}
-function shortMessage(style,trimmed){
+function shortMessage(style,trimmed,kind){
   const who=NAME[style]||'names',scope=windowPhrase()?' for '+windowPhrase():'';
   const what=trimmed?'It uses the '+who+' on screen'+scope+' and the strongest links.':'It includes the '+who+' on screen'+scope+'.';
-  return 'Short link copied. '+what+' The address was sent to is.gd, which stores it.';
+  return 'Short link copied. '+what+' The address was sent to is.gd, which stores it.'+clampNote(kind);
 }
 async function shortenHref(href){
   const res=await fetch('https://is.gd/create.php?format=json&url='+encodeURIComponent(href));
@@ -557,8 +575,8 @@ $('cl').onclick=()=>{
   let obj;
   try{obj=sharePayload();}catch(e){note('Lower the minimum until a few people show, then copy a link.');return;}
   const built=packToSend(obj).then(r=>{if(r.href.length>12000)throw new Error('long');return r;});
-  const finish=r=>{hideLink();markCopied();note(linkMessage(r.href,obj.s,r.trimmed));};
-  const showBox=r=>{const box=$('linkbox');box.hidden=false;box.value=r.href;box.focus();box.select();note(r.trimmed?'The link below is selected. It uses the '+(NAME[obj.s]||'names')+' on screen and the strongest links.':'Select the link below and copy it.');};
+  const finish=r=>{hideLink();markCopied();note(linkMessage(r.href,obj.s,r.trimmed,r.clamped));};
+  const showBox=r=>{const box=$('linkbox');box.hidden=false;box.value=r.href;box.focus();box.select();note((r.trimmed?'The link below is selected. It uses the '+(NAME[obj.s]||'names')+' on screen and the strongest links.':'Select the link below and copy it.')+clampNote(r.clamped));};
   const tooBig='This view has too many players for a link. Download the image to share it.';
   const fail=e=>{if(e&&e.message==='long'){hideLink();note(tooBig);return;}built.then(showBox).catch(err=>note(err&&err.message==='long'?tooBig:'Couldn’t make the link.'));};
   const writeFallback=r=>copyText(r.href).then(()=>finish(r)).catch(()=>showBox(r));
@@ -579,10 +597,10 @@ $('sl').onclick=()=>{
   btn.disabled=true;
   hideLink();
   note('Sending the address to is.gd…');
-  const built=packToSend(obj).then(async r=>{if(r.href.length>12000)throw new Error('long');return {href:await shortenHref(r.href),trimmed:r.trimmed};});
+  const built=packToSend(obj).then(async r=>{if(r.href.length>12000)throw new Error('long');return {href:await shortenHref(r.href),trimmed:r.trimmed,clamped:r.clamped};});
   const release=()=>{btn.disabled=false;};
-  const finish=r=>{hideLink();markShortened();note(shortMessage(obj.s,r.trimmed));release();};
-  const showBox=r=>{const box=$('linkbox');box.hidden=false;box.value=r.href;box.focus();box.select();note('The short link below is selected. The address was sent to is.gd, which stores it.');release();};
+  const finish=r=>{hideLink();markShortened();note(shortMessage(obj.s,r.trimmed,r.clamped));release();};
+  const showBox=r=>{const box=$('linkbox');box.hidden=false;box.value=r.href;box.focus();box.select();note('The short link below is selected. The address was sent to is.gd, which stores it.'+clampNote(r.clamped));release();};
   const tooBig='This view has too many players for a link. Download the image to share it.';
   const fail=e=>{release();hideLink();note(e&&e.message==='long'?tooBig:'Couldn’t shorten this address. Copy link keeps it on this device.');};
   const writeFallback=r=>copyText(r.href).then(()=>finish(r)).catch(()=>showBox(r));
